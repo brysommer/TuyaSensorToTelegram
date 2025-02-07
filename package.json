@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "npm install && npm run test",
   "main": "index.js",
+  "type": "module",
   "scripts": {
     "test": "ts-node nodejs_demo.ts"
   },
