@@ -1,59 +1,75 @@
-import qs from 'qs'
-import crypto from 'crypto'
-import axios from 'axios'
-import TelegramBot from 'node-telegram-bot-api';
-import config from './config.js';
+import qs from "qs";
+import crypto from "crypto";
+import axios from "axios";
+import TelegramBot from "node-telegram-bot-api";
+import config from "./config.js";
 
-let token = '';
+let token = "";
 const voltageLog = new Array(48).fill(0);
 
 const bot = new TelegramBot(config.telegramToken);
 const httpClient = axios.create({ baseURL: config.host, timeout: 5000 });
 
-const encryptStr = async (str, secret) => 
-  crypto.createHmac('sha256', secret).update(str, 'utf8').digest('hex').toUpperCase();
+const encryptStr = async (str, secret) =>
+  crypto
+    .createHmac("sha256", secret)
+    .update(str, "utf8")
+    .digest("hex")
+    .toUpperCase();
 
 const getRequestSign = async (
   path,
   method,
   headers = {},
   query = {},
-  body = {},
+  body = {}
 ) => {
   const t = Date.now().toString();
-  const [uri, pathQuery] = path.split('?');
+  const [uri, pathQuery] = path.split("?");
   const queryMerged = { ...query, ...qs.parse(pathQuery) };
-  const sortedQuery = Object.keys(queryMerged).sort().reduce((acc, key) => ({ ...acc, [key]: query[key] }), {});
+  const sortedQuery = Object.keys(queryMerged)
+    .sort()
+    .reduce((acc, key) => ({ ...acc, [key]: query[key] }), {});
   const querystring = decodeURIComponent(qs.stringify(sortedQuery));
   const url = querystring ? `${uri}?${querystring}` : uri;
-  const contentHash = crypto.createHash('sha256').update(JSON.stringify(body)).digest('hex');
-  const stringToSign = [method, contentHash, '', url].join('\n');
+  const contentHash = crypto
+    .createHash("sha256")
+    .update(JSON.stringify(body))
+    .digest("hex");
+  const stringToSign = [method, contentHash, "", url].join("\n");
   const signStr = config.accessKey + token + t + stringToSign;
   return {
     t,
     path: url,
     client_id: config.accessKey,
     sign: await encryptStr(signStr, config.secretKey),
-    sign_method: 'HMAC-SHA256',
+    sign_method: "HMAC-SHA256",
     access_token: token,
   };
 };
 
 const getToken = async () => {
-  const method = 'GET';
+  const method = "GET";
   const timestamp = Date.now().toString();
-  const signUrl = '/v1.0/token?grant_type=1';
-  const contentHash = crypto.createHash('sha256').update('').digest('hex');
-  const stringToSign = [method, contentHash, '', signUrl].join('\n');
+  const signUrl = "/v1.0/token?grant_type=1";
+  const contentHash = crypto.createHash("sha256").update("").digest("hex");
+  const stringToSign = [method, contentHash, "", signUrl].join("\n");
   const signStr = config.accessKey + timestamp + stringToSign;
-  const headers = { t: timestamp, sign_method: 'HMAC-SHA256', client_id: config.accessKey, sign: await encryptStr(signStr, config.secretKey) };
-  const { data } = await httpClient.get('/v1.0/token?grant_type=1', { headers });
+  const headers = {
+    t: timestamp,
+    sign_method: "HMAC-SHA256",
+    client_id: config.accessKey,
+    sign: await encryptStr(signStr, config.secretKey),
+  };
+  const { data } = await httpClient.get("/v1.0/token?grant_type=1", {
+    headers,
+  });
   if (!data?.success) throw new Error(`fetch failed: ${data.msg}`);
   token = data.result.access_token;
 };
 
 const getDeviceInfo = async () => {
-  const method = 'GET';
+  const method = "GET";
   const url = `/v1.0/devices/${config.deviceId}/status`;
   const reqHeaders = await getRequestSign(url, method, {}, {});
   const { data } = await httpClient.request({
@@ -63,27 +79,33 @@ const getDeviceInfo = async () => {
     headers: reqHeaders,
     url: reqHeaders.path,
   });
-  if (!data?.success) throw new Error(`request api failed: ${data.msg}`);
+  if (!data?.success) {
+    bot.sendMessage(config.chatId, "❄️ УВАГА: МОРОЗІЛКА ОФЛАЙН! ❄️");
+  }
 
-  const voltageStatus = data.result.find(status => status.code === 'cur_voltage');
+  const voltageStatus = data.result.find(
+    (status) => status.code === "cur_voltage"
+  );
   if (voltageStatus) {
     const voltage = voltageStatus.value / 10;
     const index = Math.floor((Date.now() / 1000 / 60 / 30) % 48);
     voltageLog[index] = voltage;
 
-    let message = '';
+    let message = "";
     if (voltage > 215) message = `🟢 Напруга в нормі: ${voltage.toFixed(1)}V`;
-    else if (voltage < 208) message = `🔴 Дуже низька напруга: ${voltage.toFixed(1)}V`;
-    else if (voltage < 215) message = `🟡 Низька напруга: ${voltage.toFixed(1)}V`;
-    
+    else if (voltage < 208)
+      message = `🔴 Дуже низька напруга: ${voltage.toFixed(1)}V`;
+    else if (voltage < 215)
+      message = `🟡 Низька напруга: ${voltage.toFixed(1)}V`;
+
     if (message) await bot.sendMessage(config.chatId, message);
   }
 };
 
 const sendDailyStats = async () => {
-  const below198 = voltageLog.filter(v => v < 198).length * 30;
-  const below208 = voltageLog.filter(v => v < 208).length * 30;
-  const above215 = voltageLog.filter(v => v > 215).length * 30;
+  const below198 = voltageLog.filter((v) => v < 198).length * 30;
+  const below208 = voltageLog.filter((v) => v < 208).length * 30;
+  const above215 = voltageLog.filter((v) => v > 215).length * 30;
   const statsMessage = `📊 Статистика за 24 години:
 ⚠️ Напруга <198V: ${below198} хв
 ⚠️ Напруга <208V: ${below208} хв
@@ -96,9 +118,17 @@ const monitorVoltage = async () => {
   try {
     await getToken();
     await getDeviceInfo();
-    setInterval(getDeviceInfo, 30000);
+    setInterval(getDeviceInfo, 60 * 60 * 1000);
     const now = new Date();
-    const millisTill10AM = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 10, 0, 0).getTime() - now.getTime();
+    const millisTill10AM =
+      new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate(),
+        10,
+        0,
+        0
+      ).getTime() - now.getTime();
     setTimeout(() => {
       sendDailyStats();
       setInterval(sendDailyStats, 24 * 60 * 60 * 1000);
